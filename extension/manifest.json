@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "coupang-store-tool",
+  "short_name": "coupang-store",
+  "version": "0.7.1",
+  "description": "WING 상품 점검(노출제한·아이템위너·옵션 분리)과 광고센터 캠페인 분석(ROAS·손익분기·수정 제안).",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "alarms",
+    "notifications",
+    "sidePanel",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://wing.coupang.com/*",
+    "https://helpseller.coupangcorp.com/*",
+    "https://advertising.coupang.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "coupang-store-tool",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://helpseller.coupangcorp.com/hc/*/requests/new*"
+      ],
+      "js": [
+        "content/inquiry-fill.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

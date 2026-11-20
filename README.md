@@ -54,11 +54,9 @@ Chrome 웹 스토어에 등록되어 있지 않으므로 **개발자 모드로 �
 5. **「압축해제된 확장 프로그램을 로드합니다」** → 2번에서 푼 폴더 선택
 6. 툴바의 퍼즐 아이콘 → **coupang-store-tool** 고정(📌) → 아이콘을 누르면 오른쪽에 사이드 패널이 열립니다.
 
-### 방법 B. 소스로 설치
-```bash
-git clone https://github.com/<계정>/coupang-store-tool.git
-```
-`chrome://extensions` → 개발자 모드 → 「압축해제된 확장 프로그램을 로드합니다」 → 저장소 안의 **`extension` 폴더** 선택
+### 방법 B. 저장소 전체를 내려받아 설치
+1. 이 페이지 위쪽 초록색 **Code → Download ZIP** 으로 내려받아 압축을 풉니다. (또는 `git clone https://github.com/toolboxnotes/coupang-store-tool.git`)
+2. `chrome://extensions` → 개발자 모드 → 「압축해제된 확장 프로그램을 로드합니다」 → 압축을 푼 폴더 안의 **`extension` 폴더** 선택
 
 ### 업데이트
 새 버전 파일로 폴더 내용을 바꾼 뒤 `chrome://extensions` 에서 이 확장의 **새로고침(↻)** 버튼을 누릅니다. 저장된 점검 결과·설정은 유지됩니다.

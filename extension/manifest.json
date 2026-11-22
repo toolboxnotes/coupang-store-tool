@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "coupang-store-tool",
   "short_name": "coupang-store",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "WING 상품 점검(노출제한·아이템위너·옵션 분리)과 광고센터 캠페인 분석(ROAS·손익분기·수정 제안).",
   "minimum_chrome_version": "116",
   "permissions": [

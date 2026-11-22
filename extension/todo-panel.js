@@ -9,10 +9,11 @@ const won = (n) => `${Math.round(n || 0).toLocaleString('ko-KR')}원`;
 const DAY = 86400000;
 
 async function render() {
-  const { snapshots = [], adsSnapshots = [], adPlan = [], adApplyLog = [], settings = {}, ignores = {}, ignoreTypes = {} } =
-    await chrome.storage.local.get(['snapshots', 'adsSnapshots', 'adPlan', 'adApplyLog', 'settings', 'ignores', 'ignoreTypes']);
+  const { snapshots = [], adsSnapshots = [], adPlan = [], adApplyLog = [], settings = {}, ignores = {}, ignoreTypes = {}, status = null } =
+    await chrome.storage.local.get(['snapshots', 'adsSnapshots', 'adPlan', 'adApplyLog', 'settings', 'ignores', 'ignoreTypes', 'status']);
   const items = [];   // { level: 2 빨강 / 1 주황 / 0 회색, text, go }
   const now = Date.now();
+  if (status && status.state === 'paused') items.push({ level: 1, text: '멈춘 상품 점검이 있습니다 → 위쪽 「이어서 점검」', go: null });
 
   // 상품
   const cur = snapshots[snapshots.length - 1];
@@ -65,6 +66,6 @@ $('todo').addEventListener('click', (e) => {
   if (it && window.switchTab) window.switchTab(it.dataset.go);
 });
 chrome.storage.onChanged.addListener((c) => {
-  if (c.snapshots || c.adsSnapshots || c.adPlan || c.adApplyLog || c.settings || c.ignores || c.ignoreTypes) render();
+  if (c.snapshots || c.adsSnapshots || c.adPlan || c.adApplyLog || c.settings || c.ignores || c.ignoreTypes || (c.status && (!c.status.oldValue || !c.status.newValue || c.status.oldValue.state !== c.status.newValue.state))) render();
 });
 render();

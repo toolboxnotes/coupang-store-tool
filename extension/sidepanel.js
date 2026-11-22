@@ -45,10 +45,22 @@ $('issueFilter').insertAdjacentHTML('beforeend', '<option value="__AD">광고 �
 for (let h = 0; h < 24; h++) $('scanHour').insertAdjacentHTML('beforeend', `<option value="${h}">${h}</option>`);
 
 // ── 버튼 ──
+// 지금 점검: 멈춘 점검이 있으면 이어서, 없으면 새로 (처음부터 하려면 「처음부터 다시」)
 $('scanBtn').addEventListener('click', async () => {
   $('scanBtn').disabled = true;
   await chrome.runtime.sendMessage({ type: 'scan' });
   $('scanBtn').disabled = false;
+});
+$('resumeBtn').addEventListener('click', () => $('scanBtn').click());
+// 중지: 지금 단계(상품 목록 1페이지 또는 상세 15개)가 끝나면 멈춤
+$('stopBtn').addEventListener('click', async () => {
+  $('stopBtn').disabled = true;
+  $('stopBtn').textContent = '멈추는 중…';
+  await chrome.runtime.sendMessage({ type: 'scanStop' });
+});
+$('discardBtn').addEventListener('click', async () => {
+  if (!confirm('저장된 점검 진행 상황을 버릴까요? 다음 점검은 처음부터 시작합니다.')) return;
+  await chrome.runtime.sendMessage({ type: 'scanDiscard' });
 });
 $('issueFilter').addEventListener('change', () => { shown = 100; selected.clear(); renderIssues(); });
 $('search').addEventListener('input', () => { shown = 100; selected.clear(); renderIssues(); });
@@ -425,16 +437,29 @@ function openLink(e) {
 function renderStatus(st) {
   const el = $('status');
   el.className = 'status';
-  if (!st) { el.textContent = '준비됨'; return; }
-  if (st.state === 'running') {
+  const stepText = (p) => (p ? (p.phase === 'list' ? `상품 목록·노출 상태 ${p.done}/${p.total || '?'} 페이지` : `상세 정보 ${p.done}/${p.total} 상품`) : '시작 중');
+  const running = st && st.state === 'running';
+  const paused = st && st.state === 'paused';
+  $('stopBtn').hidden = !running;
+  if (!running) { $('stopBtn').disabled = false; $('stopBtn').textContent = '중지'; }
+  $('scanBtn').disabled = running;
+  $('scanBtn').hidden = paused;
+  $('pauseBar').hidden = !paused;
+  if (!st || st.state === 'idle') { el.textContent = '준비됨'; return; }
+  if (running) {
     el.classList.add('running');
-    const p = st.progress;
-    const step = p ? (p.phase === 'list' ? `상품 목록·노출 상태 ${p.done}/${p.total} 페이지` : `상세 정보 ${p.done}/${p.total} 상품`) : '시작 중';
-    el.textContent = `점검 중… ${step} (상품이 많으면 몇 분 걸립니다)`;
-    $('scanBtn').disabled = true;
+    el.textContent = `점검 중… ${stepText(st.progress)}${st.resumed ? ' (이어서)' : ''} · 중지해도 진행 상황은 저장됩니다`;
     return;
   }
-  $('scanBtn').disabled = false;
+  if (paused) {
+    el.classList.add('error');
+    const why = {
+      STOPPED: '중지함', INTERRUPTED: '중간에 끊김 (브라우저 종료·절전·탭 닫힘 등)', AUTH: 'WING 로그인 필요 — 로그인 후 이어서 점검',
+      RATE: 'WING이 요청을 잠시 막음 — 30분쯤 뒤 이어서 점검', NETWORK: '네트워크 오류 또는 일시 차단 — 잠시 뒤 이어서 점검', INJECT: 'WING 화면에서 실행 실패 — WING 로그인 확인',
+    }[st.reason] || '멈춤';
+    el.textContent = `점검 멈춤: ${why} · 진행 ${stepText(st.progress)} (12시간 안에 이어서 점검 가능)`;
+    return;
+  }
   if (st.state === 'error') { el.classList.add('error'); el.textContent = `점검 실패: ${st.message}`; return; }
   el.textContent = `마지막 점검 완료: ${fmt(st.at)}`;
 }

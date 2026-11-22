@@ -125,3 +125,5 @@ label.mini input[type=number]{width:46px}
 .todo{margin:6px 0 10px}.todohead{font-weight:700;margin-bottom:4px}.todoitem{padding:7px 9px;margin:4px 0;border-radius:8px;background:var(--card,#fff);border:1px solid var(--line);font-size:13px}.todoitem[data-go]{cursor:pointer}.todoitem.l2{border-left:4px solid var(--red)}.todoitem.l1{border-left:4px solid var(--orange)}.todoitem.l0{border-left:4px solid var(--line)}
 .aiwrap summary{cursor:pointer}
 .tag.adtag{background:#fff1e6;color:#b45309;border:1px solid #f5c08a}
+.scanbtns{display:flex;gap:6px}.pausebar{display:flex;gap:6px;padding:0 12px 8px}.pausebar button{flex:1}
+.pausebar[hidden]{display:none}

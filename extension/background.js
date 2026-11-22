@@ -1,5 +1,5 @@
 // 백그라운드 서비스 워커: 점검 실행, 자동 점검 예약, 스냅샷 저장, 알림
-import { wingScanInPage } from './lib/wing.js';
+import { wingListPageInPage, wingDetailBatchInPage } from './lib/wing.js';
 import { adsScanInPage } from './lib/ads.js';
 import { adsApplyInPage } from './lib/adsWrite.js';
 import { trendsInPage } from './lib/trends.js';
@@ -81,28 +81,120 @@ async function findOrOpenWingTab() {
   return { tab, opened: true };
 }
 
-export async function runScan(trigger = 'manual') {
+// ── 상품 점검: 짧은 단계로 나눠 실행하고 단계마다 진행 상황(scanJob)을 저장 ──
+//  - 「중지」: 지금 단계가 끝나면 멈춤 → 「이어서 점검」으로 계속 / 「처음부터」로 버림
+//  - 로그인 만료·차단·네트워크 오류: 멈춤 상태로 저장 → 문제 해결 후 이어서 점검
+//  - 브라우저 종료·PC 절전 등으로 백그라운드가 멈추면 다음 실행 때 「멈춤」으로 표시
+const JOB_TTL = 12 * 3600000;        // 12시간이 지난 진행 상황은 버리고 처음부터
+const DETAIL_BATCH = 15;             // 상세 정보 한 단계에 15개 (약 30초)
+let stopRequested = false;
+
+async function loadJob() {
+  const { scanJob } = await chrome.storage.local.get('scanJob');
+  if (!scanJob) return null;
+  if (Date.now() - Date.parse(scanJob.startedAt) > JOB_TTL) { await chrome.storage.local.remove('scanJob'); return null; }
+  return scanJob;
+}
+const saveJob = (job) => chrome.storage.local.set({ scanJob: { ...job, updatedAt: new Date().toISOString() } });
+const jobProgress = (job) => job.stage === 'list'
+  ? { phase: 'list', done: Math.max(0, job.page - 1), total: job.totalPages || 0 }
+  : { phase: 'detail', done: job.detailDone, total: (job.detailTargets || []).length };
+
+// 백그라운드가 다시 시작됐는데 상태가 「점검 중」이면 = 중간에 끊긴 것 → 멈춤으로 표시
+(async () => {
+  const { status } = await chrome.storage.local.get('status');
+  if (status && status.state === 'running' && !running) {
+    const job = await loadJob();
+    await setStatus(job
+      ? { state: 'paused', trigger: status.trigger, reason: 'INTERRUPTED', progress: jobProgress(job) }
+      : { state: 'error', trigger: status.trigger, code: 'INTERRUPTED', message: '점검이 중간에 끊겼습니다 (브라우저 종료·절전 등). 다시 점검하세요.' });
+  }
+})();
+
+async function wingTab(state) {
+  if (state.tabId) {
+    const t = await chrome.tabs.get(state.tabId).catch(() => null);
+    if (t && /^https:\/\/wing\.coupang\.com\//.test(t.url || '')) return t;
+  }
+  const w = await findOrOpenWingTab();
+  if (w.opened) state.opened = w.tab.id;
+  state.tabId = w.tab.id;
+  return w.tab;
+}
+async function inWing(state, func, args) {
+  const tab = await wingTab(state);
+  const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func, args: [args] });
+  if (!res || res.result == null) throw { code: 'INJECT' };
+  return res.result;
+}
+
+export async function runScan(trigger = 'manual', opts = {}) {
   if (running) return { ok: false, error: 'BUSY' };
   running = true;
+  stopRequested = false;
   const s = await getSettings();
-  await setStatus({ state: 'running', trigger });
-  let opened = null;
+  const state = { tabId: null, opened: null };
+  let job = null;
   try {
     let raw;
     if (s.demoMode) {
+      await setStatus({ state: 'running', trigger });
       const { snapshots = [] } = await chrome.storage.local.get('snapshots');
       raw = demoScan(snapshots.length + 1);
     } else {
-      const w = await findOrOpenWingTab();
-      opened = w.opened ? w.tab.id : null;
-      const [res] = await chrome.scripting.executeScript({
-        target: { tabId: w.tab.id },
-        func: wingScanInPage,
-        args: [{ pageSize: s.pageSize, delayMs: s.delayMs, collectStatus: true, collectDetail: s.collectDetail, detailOnlyActive: true }],
-      });
-      raw = res && res.result;
-      if (!raw || !raw.all) throw { code: 'INJECT', message: errorText('INJECT') };
-      if (raw.all.error) throw { code: raw.all.error.error, message: errorText(raw.all.error.error) };
+      job = opts.fresh ? null : await loadJob();
+      if (!job) {
+        job = { id: Date.now(), trigger, startedAt: new Date().toISOString(), stage: 'list', page: 1, totalPages: null, totalCount: 0, list: [], statusError: null, detailTargets: null, detailDone: 0, detailError: null };
+        await saveJob(job);
+      }
+      await setStatus({ state: 'running', trigger: job.trigger, progress: jobProgress(job), resumed: job.page > 1 || job.detailDone > 0 });
+
+      // 1) 상품 목록 + 노출 상태 (페이지 단위)
+      while (job.stage === 'list') {
+        if (stopRequested) throw { code: 'STOPPED' };
+        if (job.page > 1) await sleep(s.delayMs);
+        const r = await inWing(state, wingListPageInPage, { page: job.page, pageSize: s.pageSize, collectStatus: true, delayMs: s.delayMs });
+        if (r.error) throw { code: r.error.error || 'API' };
+        job.list.push(...r.list);
+        job.totalPages = r.totalPages;
+        job.totalCount = r.totalCount;
+        if (r.statusError && !job.statusError) job.statusError = r.statusError;
+        job.page++;
+        if (job.page > job.totalPages || job.page > 200 || !r.list.length) {
+          job.truncated = job.totalPages > 200;
+          job.stage = s.collectDetail ? 'detail' : 'done';
+          job.detailTargets = job.list.filter((p) => p.productStatus !== 'SUSPENDED').slice(0, 600).map((p) => p.vendorInventoryId);
+        }
+        await saveJob(job);
+        await setStatus({ state: 'running', trigger: job.trigger, progress: jobProgress(job) });
+      }
+
+      // 2) 상세 정보 (판매중 상품, 15개씩)
+      const byId = new Map(job.list.map((p) => [String(p.vendorInventoryId), p]));
+      while (job.stage === 'detail') {
+        if (stopRequested) throw { code: 'STOPPED' };
+        const ids = job.detailTargets.slice(job.detailDone, job.detailDone + DETAIL_BATCH);
+        if (!ids.length) { job.stage = 'done'; break; }
+        await sleep(s.delayMs);
+        const r = await inWing(state, wingDetailBatchInPage, { ids, delayMs: s.delayMs });
+        for (const [pid, m] of Object.entries(r.details || {})) {
+          const p = byId.get(String(pid));
+          if (p) for (const it of p.vendorInventoryItems || []) if (m[String(it.vendorItemId)]) it._detail = m[String(it.vendorItemId)];
+        }
+        job.detailDone += r.done || 0;
+        if (r.error) {
+          if (r.error.error === 'AUTH' || r.error.error === 'RATE' || r.error.error === 'NETWORK') { await saveJob(job); throw { code: r.error.error }; }
+          job.detailError = r.error; job.stage = 'done';            // 기타 오류: 상세는 여기까지만
+        }
+        if (job.detailDone >= job.detailTargets.length) job.stage = 'done';
+        await saveJob(job);
+        await setStatus({ state: 'running', trigger: job.trigger, progress: jobProgress(job) });
+      }
+      raw = {
+        all: { list: job.list, totalCount: job.totalCount, truncated: !!job.truncated }, filters: {},
+        statusError: job.statusError, detailError: job.detailError,
+        detailCount: job.detailDone, detailTargets: (job.detailTargets || []).length, finishedAt: new Date().toISOString(),
+      };
     }
 
     const allRows = normalize(raw.all.list);
@@ -114,10 +206,10 @@ export async function runScan(trigger = 'manual') {
     const changes = diffSnapshots(prev && prev.rows, rows);
     const summary = summarize(rows);
     const filterErrors = [];
-    if (raw.statusError) filterErrors.push('노출 상태(아이템위너) 조회 실패');
+    if (raw.statusError) filterErrors.push('노출 상태(아이템위너) 일부 조회 실패');
     if (raw.detailError) filterErrors.push(`상세 정보 일부만 수집 (${raw.detailCount || 0}/${raw.detailTargets || 0})`);
     const snap = {
-      id: Date.now(), at: raw.finishedAt || new Date().toISOString(), trigger, demo: !!raw.demo,
+      id: Date.now(), at: raw.finishedAt || new Date().toISOString(), trigger: (job && job.trigger) || trigger, demo: !!raw.demo,
       summary, rows, changes, truncated: !!raw.all.truncated, filterErrors, excluded,
       totalProducts: raw.all.totalCount || 0, detailCount: raw.detailCount || 0, detailTargets: raw.detailTargets || 0,
       sample: raw.all.list && raw.all.list.length ? (raw.all.list.find((p) => p.productStatus !== 'SUSPENDED') || raw.all.list[0]) : null, // 필드 보정용 원본 샘플 1건
@@ -125,7 +217,8 @@ export async function runScan(trigger = 'manual') {
     snapshots.push(snap);
     while (snapshots.length > s.keepSnapshots) snapshots.shift(); // 최근 N회만 보관
     await chrome.storage.local.set({ snapshots });
-    await setStatus({ state: 'done', trigger, lastId: snap.id });
+    await chrome.storage.local.remove('scanJob');
+    await setStatus({ state: 'done', trigger: snap.trigger, lastId: snap.id });
 
     // 새로 생긴 주의 이상 문제가 있으면 알림 (무시 목록에 있는 문제는 제외)
     const { ignores = {}, ignoreTypes = {} } = await chrome.storage.local.get(['ignores', 'ignoreTypes']);
@@ -144,24 +237,35 @@ export async function runScan(trigger = 'manual') {
     return { ok: true, id: snap.id };
   } catch (e) {
     const code = (e && e.code) || 'UNKNOWN';
-    await setStatus({ state: 'error', trigger, code, message: (e && e.message) || errorText(code) });
-    if (trigger === 'auto' && code === 'AUTH' && s.notify) {
-      chrome.notifications.create('sl-auth', { type: 'basic', iconUrl: 'icons/icon128.png', title: 'coupang-store-tool: WING 로그인 필요', message: '자동 점검을 완료하지 못했습니다. Chrome에서 WING에 로그인한 뒤 「지금 점검」을 눌러주세요.' });
+    const tr = (job && job.trigger) || trigger;
+    // 진행 상황이 있으면 「멈춤」(이어서 점검 가능), 없으면 오류
+    if (job && ['STOPPED', 'AUTH', 'RATE', 'NETWORK', 'INJECT'].includes(code)) {
+      await setStatus({ state: 'paused', trigger: tr, reason: code, progress: jobProgress(job) });
+    } else {
+      await setStatus({ state: 'error', trigger: tr, code, message: (e && e.message) || errorText(code) });
+    }
+    if (tr === 'auto' && code === 'AUTH' && s.notify) {
+      chrome.notifications.create('sl-auth', { type: 'basic', iconUrl: 'icons/icon128.png', title: 'coupang-store-tool: WING 로그인 필요', message: '자동 점검이 멈췄습니다. Chrome에서 WING에 로그인한 뒤 「이어서 점검」을 눌러주세요.' });
     }
     return { ok: false, error: code };
   } finally {
     running = false;
-    if (opened) chrome.tabs.remove(opened).catch(() => {});
+    stopRequested = false;
+    if (state.opened) chrome.tabs.remove(state.opened).catch(() => {});
   }
 }
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, Math.round(ms * (0.8 + Math.random() * 0.5))));
 
 function errorText(code) {
   return {
     AUTH: 'WING 로그인이 만료되었습니다. Chrome에서 wing.coupang.com에 다시 로그인한 뒤 시도하세요.',
-    RATE: 'WING 요청이 너무 많아 중단했습니다. 10분 후 다시 시도하세요.',
-    NETWORK: '네트워크 오류로 중단했습니다.',
+    RATE: 'WING 요청이 너무 많아 멈췄습니다. 30분쯤 뒤 이어서 점검하세요.',
+    NETWORK: '네트워크 오류 또는 WING이 요청을 잠시 막아 멈췄습니다. 잠시 뒤 이어서 점검하세요.',
     API: 'WING이 오류를 반환해 중단했습니다. 화면 구조가 변경되었을 수 있습니다.',
     INJECT: 'WING 페이지에서 실행할 수 없습니다. WING 로그인 상태를 확인하세요.',
+    STOPPED: '사용자가 점검을 멈췄습니다.',
+    INTERRUPTED: '점검이 중간에 끊겼습니다 (브라우저 종료·절전·탭 닫힘 등).',
   }[code] || '알 수 없는 오류';
 }
 
@@ -448,12 +552,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (trendsRunning) setTrendsStatus({ state: 'running', progress: { phase: msg.phase, done: msg.done, total: msg.total } });
     return false;
   }
-  if (msg.type === 'progress') {
-    if (running) setStatus({ state: 'running', progress: { phase: msg.phase, done: msg.done, total: msg.total } });
-    return false;
-  }
   (async () => {
-    if (msg.type === 'scan') sendResponse(await runScan('manual'));
+    if (msg.type === 'scan') sendResponse(await runScan('manual', { fresh: !!msg.fresh }));
+    else if (msg.type === 'scanStop') { stopRequested = running; sendResponse({ ok: true, running }); }
+    else if (msg.type === 'scanDiscard') {
+      if (!running) { await chrome.storage.local.remove('scanJob'); await setStatus({ state: 'idle' }); }
+      sendResponse({ ok: !running });
+    }
     else if (msg.type === 'adsScan') sendResponse(await runAdsScan(Number(msg.days) || 7));
     else if (msg.type === 'adsApply') sendResponse(await runAdsApply(msg.changes));
     else if (msg.type === 'trends') sendResponse(await runTrends({ codes: msg.codes, detail: msg.detail }));
@@ -462,7 +567,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       await scheduleAlarm();
       sendResponse({ ok: true });
     } else if (msg.type === 'clearData') {
-      await chrome.storage.local.remove(['snapshots', 'status', 'adsSnapshots', 'adsStatus', 'trendsSnapshot', 'trendsStatus', 'adCpcCache', 'adsIndex']);
+      await chrome.storage.local.remove(['snapshots', 'status', 'adsSnapshots', 'adsStatus', 'trendsSnapshot', 'trendsStatus', 'adCpcCache', 'adsIndex', 'scanJob']);
       sendResponse({ ok: true });
     }
   })();

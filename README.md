@@ -48,7 +48,7 @@ WING과 쿠팡 광고센터에서 이미 로그인한 화면의 데이터를 읽
 Chrome 웹 스토어에 등록되어 있지 않으므로 **개발자 모드로 직접 설치**합니다.
 
 ### 방법 A. 압축 파일로 설치 (권장)
-1. 이 저장소의 **[Releases](../../releases)** 에서 `coupang-store-tool-extension-v버전.zip` 을 내려받습니다.
+1. **[최신 버전 다운로드 (coupang-store-tool-extension.zip)](https://github.com/toolboxnotes/coupang-store-tool/releases/latest/download/coupang-store-tool-extension.zip)** — 링크는 항상 최신 버전 파일입니다. 특정 버전이 필요하면 [Releases](../../releases)에서 `coupang-store-tool-extension-v버전.zip`을 받습니다.
 2. 압축을 풉니다. (예: `D:\tools\coupang-store-tool-extension`)
 3. Chrome 주소창에 `chrome://extensions` 입력
 4. 오른쪽 위 **개발자 모드** 켜기

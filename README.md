@@ -9,6 +9,7 @@ WING과 쿠팡 광고센터에서 이미 로그인한 화면의 데이터를 읽
 
 - 현재 버전: **0.7.2** (변경 내용: [CHANGELOG.md](CHANGELOG.md))
 - 화면·설명: 한국어
+- 만든 사람 블로그: **[Toolbox Notes](https://toolboxnotes.com/ko/)** — 사용 후기·문의·다른 도구 소개
 
 ---
 
@@ -157,6 +158,11 @@ server/               서버 버전 (보류)
 ```bash
 npm test     # Node.js 18 이상, 별도 설치 없음
 ```
+
+## 만든 사람
+
+- 블로그: [Toolbox Notes](https://toolboxnotes.com/ko/)
+- 버그·건의: 이 저장소의 [Issues](../../issues)
 
 ## 라이선스
 

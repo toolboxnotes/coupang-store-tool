@@ -9,7 +9,8 @@ WING과 쿠팡 광고센터에서 이미 로그인한 화면의 데이터를 읽
 
 - 현재 버전: **0.7.2** (변경 내용: [CHANGELOG.md](CHANGELOG.md))
 - 화면·설명: 한국어
-- 만든 사람 블로그: **[Toolbox Notes](https://toolboxnotes.com/ko/)** — 사용 후기·문의·다른 도구 소개
+- 사용 설명(블로그): **[쿠팡 아이템위너·매칭 분리·광고 ROAS 점검 무료 크롬 확장](https://toolboxnotes.com/ko/posts/coupang-store-tool-chrome-extension/)**
+- 만든 사람 블로그: **[Toolbox Notes](https://toolboxnotes.com/ko/)** — 사용 후기·문의·[다른 무료 도구](https://toolboxnotes.com/ko/tools/)
 
 ---
 

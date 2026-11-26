@@ -1,4 +1,4 @@
-# coupang-store-tool v0.7.2 (1단계: 상품 점검)
+# coupang-store-tool v0.7.3 (1단계: 상품 점검)
 
 ## 설치 (개발자 모드)
 1. 이 `extension` 폴더가 확장 프로그램 본체입니다 (이동·삭제하지 마세요).

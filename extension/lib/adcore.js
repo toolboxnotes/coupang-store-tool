@@ -568,3 +568,33 @@ export function adProductIssues(adsSnap, productRows) {
   }
   return [...agg.values()].sort((a, b) => b.spend - a.spend);
 }
+
+// ══════════════════════════════════════════════════════════════
+// 캠페인별 제외 키워드 현황 + 추천
+// ══════════════════════════════════════════════════════════════
+//  current : 지금 제외 키워드 (인기 검색어면 popular 표시)
+//  add     : 제외 추천 = 광고 보고서에서 전환 없이 광고비만 쓴 키워드 (아직 제외 안 됨, 광고비 큰 순)
+//  watch   : 참고 = 손익분기 미달 키워드 (전환은 있음 → 바로 제외하기보다 지켜보기)
+//  release : 제외 해제 검토 = 내 카테고리 인기 검색어(키워드 트렌드)인데 제외되어 있는 키워드
+const kwKey = (k) => String(k || '').replace(/\s+/g, '').toLowerCase();
+export function negKeywordAdvice(campaign, { kwRows = [], trendKeywords = [] } = {}) {
+  const neg = (campaign.detail && campaign.detail.negativeKeywords) || [];
+  const negSet = new Set(neg.map(kwKey));
+  const popular = new Map(trendKeywords.map((t) => [kwKey(t.keyword || t), t]));
+  const mine = kwRows.filter((r) => String(r.campaignId) === String(campaign.id) || (!r.campaignId && r.campaignName === campaign.name));
+  const fresh = (r) => !r.alreadyExcluded && !negSet.has(kwKey(r.keyword));
+  return {
+    limit: 500,
+    current: neg.map((k) => ({ keyword: k, popular: popular.has(kwKey(k)) })),
+    add: mine.filter((r) => r.flag === 'WASTE' && fresh(r)).sort((a, b) => b.spend - a.spend)
+      .map((r) => ({ keyword: r.keyword, spend: r.spend, clicks: r.clicks })),
+    watch: mine.filter((r) => r.flag === 'LOSS' && fresh(r)).sort((a, b) => b.spend - a.spend)
+      .map((r) => ({ keyword: r.keyword, spend: r.spend, roas: r.roas, orders: r.orders })),
+    release: neg.filter((k) => popular.has(kwKey(k))).map((k) => {
+      const t = popular.get(kwKey(k));
+      return { keyword: k, category: (t && t.categoryName) || '', rank: (t && t.categoryRank) || null };
+    }),
+    hasReport: mine.length > 0,
+    hasTrends: trendKeywords.length > 0,
+  };
+}

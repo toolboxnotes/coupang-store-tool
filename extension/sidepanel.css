@@ -127,3 +127,7 @@ label.mini input[type=number]{width:46px}
 .tag.adtag{background:#fff1e6;color:#b45309;border:1px solid #f5c08a}
 .scanbtns{display:flex;gap:6px}.pausebar{display:flex;gap:6px;padding:0 12px 8px}.pausebar button{flex:1}
 .pausebar[hidden]{display:none}
+.negbox{margin-top:6px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg2,#f6f7f9)}
+.neghead{font-weight:600;font-size:12.5px;margin:8px 0 3px}.neghead:first-child{margin-top:0}
+.chips span.hot{border-color:#e0a100;background:#fff7d6}.chips span.add{border-color:var(--red);color:var(--red)}.chips span.watch{border-color:var(--orange)}
+.chips .none{border:0}.negbadge{font-weight:600;color:var(--red);margin-left:4px}

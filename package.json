@@ -1,6 +1,6 @@
 {
   "name": "coupang-store-tool",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "private": true,
   "license": "MIT",
   "description": "쿠팡 판매자용 상품 카탈로그 점검·광고 분석 도구 (Chrome 확장)",

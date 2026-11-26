@@ -209,3 +209,25 @@ console.log('v0.5.0 광고 테스트 통과');
   assert.deepEqual(adProductIssues({}, prows), []);
   console.log('광고 중 문제 상품 테스트 통과');
 }
+
+// 제외 키워드 현황 + 추천
+{
+  const { negKeywordAdvice } = await import('../lib/adcore.js');
+  const camp = { id: '1', name: 'AI', detail: { negativeKeywords: ['무료', '낚시 용품', '중고'] } };
+  const kwRows = [
+    { campaignId: '1', keyword: '렌탈', flag: 'WASTE', spend: 5000, clicks: 12 },
+    { campaignId: '1', keyword: '중고', flag: 'WASTE', spend: 9000 },                    // 이미 제외
+    { campaignId: '1', keyword: '대여', flag: 'WASTE', spend: 8000, clicks: 3 },
+    { campaignId: '1', keyword: '찌', flag: 'LOSS', spend: 20000, roas: 150, orders: 2 },
+    { campaignId: '2', keyword: '다른캠페인', flag: 'WASTE', spend: 99999 },
+  ];
+  const a = negKeywordAdvice(camp, { kwRows, trendKeywords: [{ keyword: '낚시용품', categoryName: '낚시 소품', categoryRank: 1 }, '전자찌'] });
+  assert.deepEqual(a.current.map((x) => x.popular), [false, true, false]);
+  assert.deepEqual(a.add.map((x) => x.keyword), ['대여', '렌탈']);       // 광고비 큰 순, 이미 제외·다른 캠페인 제외
+  assert.deepEqual(a.watch.map((x) => x.keyword), ['찌']);
+  assert.equal(a.release.length, 1); assert.equal(a.release[0].category, '낚시 소품');
+  assert.ok(a.hasReport && a.hasTrends);
+  const b = negKeywordAdvice({ id: '3', name: 'X' }, {});
+  assert.equal(b.current.length, 0); assert.ok(!b.hasReport && !b.hasTrends);
+  console.log('제외 키워드 추천 테스트 통과');
+}

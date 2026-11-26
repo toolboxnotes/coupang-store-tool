@@ -6,7 +6,7 @@
 import { ISSUE_DEFS } from './lib/core.js';
 import {
   AD_FLAGS, AD_DEFAULTS, analyzeCampaigns, summarizeAds, adsCSV, adCampaignUrl, breakEvenRoas,
-  aiSmartComparison, SERVING_HINTS, CHANGE_FIELDS, proposeChanges, PLAN_RULE_DEFAULTS, recentChangeIndex, budgetUse, evaluateEffects, EFFECT_LABELS, adProductIssues, validateChange, changeWarning, adEditUrl,
+  aiSmartComparison, SERVING_HINTS, CHANGE_FIELDS, proposeChanges, negKeywordAdvice, PLAN_RULE_DEFAULTS, recentChangeIndex, budgetUse, evaluateEffects, EFFECT_LABELS, adProductIssues, validateChange, changeWarning, adEditUrl,
   parseCSV, parseKeywordReport, analyzeKeywords, negKeywordChanges, keywordsCSV, demoKeywordReport,
 } from './lib/adcore.js';
 
@@ -26,7 +26,8 @@ function download(name, text) {
 
 let snap = null;          // 최신 광고 스냅샷
 let margin = AD_DEFAULTS.marginRate;
-let productRows = [];      // 최신 상품 점검 행 (광고 중인 문제 상품 확인용)
+let productRows = [];
+let trendKeywords = [];    // 키워드 트렌드의 내 카테고리 인기 검색어 [{ keyword, categoryName, categoryRank }]      // 최신 상품 점검 행 (광고 중인 문제 상품 확인용)
 let margins = {};          // 캠페인별 마진율 { 캠페인ID: % } (settings.adMargins)
 let rows = [];            // 분석된 캠페인
 let plan = [];            // 수정 사항 (chrome.storage.local.adPlan)
@@ -74,8 +75,14 @@ document.getElementById('tab-ads').addEventListener('click', (e) => {
   const link = e.target.closest('[data-url]');
   if (link && link.dataset.url) { chrome.tabs.create({ url: link.dataset.url, active: true }); return; }
   const tg = e.target.closest('[data-toggle]');
-  if (tg) { const el = document.getElementById(tg.dataset.toggle); if (el) el.hidden = !el.hidden; }
+  if (tg) { const el = document.getElementById(tg.dataset.toggle); if (el) { el.hidden = !el.hidden; el.hidden ? openNeg.delete(tg.dataset.toggle) : openNeg.add(tg.dataset.toggle); } return; }
+  const np = e.target.closest('[data-negplan]');
+  if (np && kw) {
+    const add = negKeywordChanges(kw.rows.filter((x) => String(x.campaignId) === np.dataset.negplan), rows);
+    mergePlan(add).then(() => { np.textContent = add.length ? '수정사항에 추가됨 ✓' : '추가할 키워드 없음'; np.disabled = true; });
+  }
 });
+const openNeg = new Set();   // 다시 그려도 열어 둔 상자 유지
 
 function visibleRows() {
   const f = $('adFilter').value, showIdle = $('adShowIdle').checked, by = $('adSort').value;
@@ -85,14 +92,39 @@ function visibleRows() {
     .sort((a, b) => (by === 'roas' ? (a.spend > 0 ? a.roas : 1e9) - (b.spend > 0 ? b.roas : 1e9) : by === 'sales' ? b.sales - a.sales : b.spend - a.spend));
 }
 
-// 제외 키워드·제외 상품·노출 상태 표시
-function detailHtml(r) {
+// 제외 키워드·제외 상품·노출 상태 + 「제외 키워드 · 추천」 상자
+//  현재 제외 키워드 / 제외 추천(광고 보고서의 전환 없는 키워드) / 지켜볼 키워드(손익분기 미달) / 제외 해제 검토(인기 검색어인데 제외됨)
+function detailHtml(r, scope = 'list') {
   const d = r.detail;
   if (!d) return '';
-  const id = `neg-${r.id}`;
+  const id = `neg-${scope}-${r.id}`;
   const hints = (d.servingHints || []).map((h) => SERVING_HINTS[h] || h);
-  return `<div class="ids">제외 키워드 ${d.negativeKeywords.length}/500 · 제외 상품 ${d.excludedProducts}개${hints.length ? ` · <span class="warnline">${esc(hints.join(', '))}</span>` : ''}</div>
-    ${d.negativeKeywords.length ? `<button class="lk2" data-toggle="${id}">제외 키워드 보기</button><div id="${id}" class="chips" hidden>${d.negativeKeywords.map((k) => `<span>${esc(k)}</span>`).join('')}</div>` : ''}`;
+  const a = negKeywordAdvice(r, { kwRows: kw ? kw.rows : [], trendKeywords });
+  const chip = (t, cls = '', title = '') => `<span class="${cls}"${title ? ` title="${esc(title)}"` : ''}>${esc(t)}</span>`;
+  const badge = [a.add.length ? `추천 ${a.add.length}` : '', a.release.length ? `해제 검토 ${a.release.length}` : ''].filter(Boolean).join(' · ');
+  const box = `<div id="${id}" class="negbox" hidden>
+      <div class="neghead">현재 제외 키워드 <b>${a.current.length}</b>/500</div>
+      <div class="chips">${a.current.map((x) => chip(x.keyword, x.popular ? 'hot' : '', x.popular ? '내 카테고리 인기 검색어' : '')).join('') || '<span class="muted none">없음</span>'}</div>
+      <div class="neghead">제외 추천 <span class="muted">전환 없이 광고비만 쓴 키워드</span></div>
+      ${a.hasReport
+        ? (a.add.length
+          ? `<div class="chips">${a.add.slice(0, 60).map((x) => chip(`${x.keyword} ${won(x.spend)}`, 'add', `클릭 ${x.clicks || 0}`)).join('')}</div>
+             <div class="links"><button class="rq" data-negplan="${esc(r.id)}">수정사항에 추가 (${Math.min(a.add.length, 500 - a.current.length)}개)</button></div>`
+          : '<div class="muted">추천할 키워드가 없습니다.</div>')
+        : '<div class="muted">「광고 → 키워드」에서 광고 보고서를 올리면 이 캠페인에서 전환 없이 광고비만 쓴 키워드를 추천합니다.</div>'}
+      ${a.watch.length ? `<div class="neghead">지켜볼 키워드 <span class="muted">전환은 있지만 손익분기 미달 — 바로 제외하지 말고 확인</span></div>
+        <div class="chips">${a.watch.slice(0, 30).map((x) => chip(`${x.keyword} ROAS ${x.roas}%`, 'watch', `광고비 ${won(x.spend)} · 주문 ${x.orders}`)).join('')}</div>` : ''}
+      <div class="neghead">제외 해제 검토 <span class="muted">내 카테고리 인기 검색어인데 제외됨</span></div>
+      ${a.hasTrends
+        ? (a.release.length
+          ? `<div class="chips">${a.release.map((x) => chip(x.keyword, 'hot', `${x.category} 인기 ${x.rank}위`)).join('')}</div>
+             <div class="muted">내 상품과 관련 있는 검색어라면 편집 화면에서 제외를 풀어 보세요.</div>`
+          : '<div class="muted">해당 없음</div>')
+        : '<div class="muted">「키워드 트렌드」에서 인기 키워드를 조회하면 확인할 수 있습니다.</div>'}
+      ${r.groupId ? `<div class="links"><button class="lk" data-url="${esc(adEditUrl(r.id, r.groupId, r.isAiSmart))}">제외 키워드 편집 화면 ↗</button></div>` : ''}
+    </div>`;
+  return `<div class="ids">제외 키워드 ${a.current.length}/500 · 제외 상품 ${d.excludedProducts}개${hints.length ? ` · <span class="warnline">${esc(hints.join(', '))}</span>` : ''}</div>
+    <button class="lk2" data-toggle="${id}">제외 키워드 · 추천${badge ? ` <b class="negbadge">${esc(badge)}</b>` : ''}</button>${box}`;
 }
 
 function render() {
@@ -145,6 +177,7 @@ function renderList() {
       <div class="acts"><button class="lk" data-url="${esc(adCampaignUrl(r.id))}">광고센터에서 열기 ↗</button>
         ${r.groupId ? `<button class="lk" data-url="${esc(adEditUrl(r.id, r.groupId, r.isAiSmart))}">설정 편집 ↗</button>` : ''}</div>
     </div>`; }).join('') + (list.length > 200 ? '<div class="muted">상위 200개만 표시 (CSV에는 전체 포함)</div>' : '');
+  for (const id of openNeg) { const el = document.getElementById(id); if (el) el.hidden = false; }
 }
 
 // ── AI 스마트 비교 ──
@@ -192,7 +225,7 @@ function renderAi() {
       <b>분석·제안</b>
       <ul class="notes">${cmp.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>
       <div class="hint">AI 스마트에서 바꿀 수 있는 것: 일예산 · 목표 ROAS · 특정 상품 제외 · 제외 키워드 (키워드와 입찰가는 쿠팡이 자동 운영)</div>
-      ${detailHtml(c)}
+      ${detailHtml(c, 'ai')}
       <div class="acts"><button class="lk" data-url="${esc(adCampaignUrl(c.id))}">광고센터에서 열기 ↗</button>
         ${c.groupId ? `<button class="lk" data-url="${esc(adEditUrl(c.id, c.groupId, true))}">설정 편집(제외 상품·키워드) ↗</button>` : ''}</div>
     </div></details>`;
@@ -244,6 +277,7 @@ $('kwExport').addEventListener('click', () => kw && download(`coupang-store-tool
 function renderKeywords() {
   if (!kw) { $('kwToolbar').hidden = true; $('kwList').innerHTML = ''; return; }
   analyzeKeywords(kw.rows, rows, { marginRate: margin, margins });
+  if (!renderKeywords.busy) { renderKeywords.busy = true; renderList(); renderKeywords.busy = false; }   // 캠페인 카드의 제외 추천 갱신
   $('kwToolbar').hidden = false;
   const waste = kw.rows.filter((r) => r.flag === 'WASTE' && !r.alreadyExcluded);
   $('kwInfo').textContent = `${kw.fileName}: 키워드 ${kw.rows.length}개 · 낭비 키워드 ${waste.length}개 (광고비 ${won(waste.reduce((a, r) => a + r.spend, 0))}) · 전환 기준 열: ${kw.columns.orders || '-'}`;
@@ -407,7 +441,8 @@ function renderStatus(st) {
 }
 
 async function load() {
-  const { adsSnapshots = [], adsStatus, settings = {}, adPlan = [], snapshots = [] } = await chrome.storage.local.get(['adsSnapshots', 'adsStatus', 'settings', 'adPlan', 'snapshots']);
+  const { adsSnapshots = [], adsStatus, settings = {}, adPlan = [], snapshots = [], trendsSnapshot = null } = await chrome.storage.local.get(['adsSnapshots', 'adsStatus', 'settings', 'adPlan', 'snapshots', 'trendsSnapshot']);
+  trendKeywords = trendsSnapshot ? (trendsSnapshot.categories || []).flatMap((c) => (c.keywords || []).map((k, i) => ({ keyword: k, categoryName: c.name, categoryRank: i + 1 }))) : [];
   const lp = snapshots[snapshots.length - 1];
   productRows = lp ? lp.rows || [] : [];
   snap = adsSnapshots.length ? adsSnapshots[adsSnapshots.length - 1] : null;
@@ -421,5 +456,5 @@ async function load() {
   render(); renderStatus(adsStatus); renderLog();
 }
 
-chrome.storage.onChanged.addListener((c) => { if (c.adsSnapshots || c.adsStatus || c.snapshots) load(); });
+chrome.storage.onChanged.addListener((c) => { if (c.adsSnapshots || c.adsStatus || c.snapshots || c.trendsSnapshot) load(); });
 load();
